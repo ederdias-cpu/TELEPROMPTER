@@ -7,6 +7,7 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
 const rooms = new Map();
 const root = path.join(__dirname, 'public');
+const staticRoots = [root, __dirname];
 const MAX_BODY = 250000;
 const mime = {'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml'};
 function send(res,code,obj){res.writeHead(code,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(obj));}
@@ -24,8 +25,16 @@ const server=http.createServer(async(req,res)=>{const url=new URL(req.url,'http:
   if(req.method==='PATCH'&&match[2]==='state'){try{const data=await parse(req);const patch=data.patch||{};if(!patch||typeof patch!=='object'||Array.isArray(patch))return send(res,400,{error:'Payload inválido'});if(Object.keys(patch).some(k=>!(k in allowed)||!allowed[k](patch[k])))return send(res,400,{error:'Configuração inválida'});if(('text' in patch||'theme' in patch)&&data.hostToken!==r.hostToken)return send(res,403,{error:'Apenas o apresentador pode editar texto e tema'});Object.assign(r.state,patch);broadcast(r);return send(res,200,{ok:true});}catch{return send(res,400,{error:'JSON inválido'});}}
  }
  if(req.method!=='GET')return send(res,405,{error:'Método não permitido'});
- let f=url.pathname==='/'?'index.html':url.pathname.substring(1);const full=path.resolve(root,f);if(!full.startsWith(root+path.sep)&&full!==path.join(root,'index.html'))return send(res,403,{error:'Proibido'});
- fs.readFile(full,(err,data)=>{if(err){res.writeHead(404);return res.end('Não encontrado');}res.writeHead(200,{'Content-Type':mime[path.extname(full)]||'application/octet-stream','Cache-Control':'no-store'});res.end(data);});
+ // Accept assets uploaded either inside public/ or at repository root.
+ // Route /prompt and /controle load the same application entry point.
+ let requested = ['/','/prompt','/controle'].includes(url.pathname) ? 'index.html' : url.pathname.slice(1);
+ if (!['index.html','app.js','style.css'].includes(requested)) return send(res,404,{error:'Não encontrado'});
+ const candidates = staticRoots.map(dir=>path.join(dir,requested));
+ function serve(index){
+  if(index>=candidates.length){res.writeHead(404,{'Content-Type':'text/plain; charset=utf-8'});return res.end('Arquivo '+requested+' não encontrado. Confira o GitHub.');}
+  fs.readFile(candidates[index],(err,data)=>{if(err)return serve(index+1);res.writeHead(200,{'Content-Type':mime[path.extname(requested)]||'application/octet-stream','Cache-Control':'no-store'});res.end(data);});
+ }
+ serve(0);
 });
 setInterval(()=>{for(const [key,r] of rooms)if(Date.now()-r.updated>24*60*60*1000){for(const c of r.clients)c.end();rooms.delete(key);}},60000).unref();
 server.listen(PORT,HOST,()=>console.log(`Teleprompter Remote: http://localhost:${PORT}`));
